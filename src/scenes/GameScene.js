@@ -10,6 +10,7 @@ import InputController from '../systems/InputController.js';
 import DiscPhysicsEngine from '../systems/DiscPhysicsEngine.js';
 import CollisionSystem from '../systems/CollisionSystem.js';
 import AIController from '../systems/AIController.js';
+import CameraManager from '../systems/CameraManager.js';
 import {
   GAME_WIDTH, GAME_HEIGHT, GAME_STATES, DISC_STATES,
   TEAMS, FIELD_BOUNDS, FIELD, PLAYER, PULL, DISC, AI
@@ -65,7 +66,12 @@ export default class GameScene extends Phaser.Scene {
     this.setupStateListeners();
 
     this.setupDomHud();
-    this.setupCamera();
+
+    this.cameraMgr = new CameraManager(this);
+    this.cameraMgr.pinToScreen(
+      this.scoreText, this.stateText,
+      this.possessionIndicator, this.messageText
+    );
 
     this._setupNextState = GAME_STATES.KICKOFF_PULL;
     this.gsm.setState(GAME_STATES.SETUP);
@@ -108,26 +114,9 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  setupCamera() {
-    this.cameras.main.setZoom(1.15);
-    this.cameras.main.setBounds(
-      FIELD_BOUNDS.LEFT - 10, FIELD_BOUNDS.TOP - 10,
-      FIELD.WIDTH + 20, FIELD.HEIGHT + 20
-    );
-    this.cameras.main.setDeadzone(180, 100);
-
-    this.scoreText.setScrollFactor(0);
-    this.stateText.setScrollFactor(0);
-    this.possessionIndicator.setScrollFactor(0);
-    this.messageText.setScrollFactor(0);
-  }
-
   updateCameraFollow() {
-    if (!this.controlledPlayer) return;
-
-    const cam = this.cameras.main;
-    if (!cam._follow || cam._follow !== this.controlledPlayer.sprite) {
-      cam.startFollow(this.controlledPlayer.sprite, true, 0.08, 0.08);
+    if (this.cameraMgr) {
+      this.cameraMgr.update(this.disc, this.controlledPlayer);
     }
   }
 
@@ -727,9 +716,10 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  processAI(delta) {
+  processAdvancedAI(delta) {
     const state = this.gsm.getState();
-    if (state !== GAME_STATES.LIVE_PLAY && state !== GAME_STATES.KICKOFF_PULL) return;
+    if (state !== GAME_STATES.LIVE_PLAY && state !== GAME_STATES.KICKOFF_PULL &&
+        state !== GAME_STATES.SETUP) return;
 
     const allPlayers = this.getAllPlayers();
     for (const p of allPlayers) {
@@ -768,7 +758,7 @@ export default class GameScene extends Phaser.Scene {
       this.updateLivePlay(delta);
     }
 
-    this.processAI(delta);
+    this.processAdvancedAI(delta);
   }
 
   updatePull(delta) {

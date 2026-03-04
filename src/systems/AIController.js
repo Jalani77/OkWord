@@ -1,5 +1,6 @@
 import { AI, PLAYER, FIELD_BOUNDS, FIELD, DISC_STATES } from '../utils/Constants.js';
 import { distanceBetween, angleBetween, normalizeVector, randomInRange } from '../utils/MathHelpers.js';
+import { seek, arrive, shadow } from './SteeringBehaviors.js';
 
 export default class AIController {
   constructor(scene) {
@@ -95,10 +96,19 @@ export default class AIController {
         this.decideDefenseTarget(defender, offensePlayers, handler, disc, i);
       }
 
-      this.moveTowardTarget(defender, delta, AI.CUT_SPEED_FACTOR);
-
       if (disc && disc.state === DISC_STATES.THROWN) {
         this.tryIntercept(defender, disc, delta);
+        this.moveTowardTarget(defender, delta, AI.CUT_SPEED_FACTOR);
+      } else if (defender.fsmState === 'marking' && defender.assignedMatchup && handler) {
+        const sd = randomInRange(AI.MARK_RANGE_MIN, AI.MARK_RANGE_MAX) * 0.35;
+        this.moveWithShadow(
+          defender,
+          defender.assignedMatchup.x, defender.assignedMatchup.y,
+          handler.x, handler.y,
+          sd, AI.CUT_SPEED_FACTOR
+        );
+      } else {
+        this.moveTowardTarget(defender, delta, AI.CUT_SPEED_FACTOR);
       }
     }
   }
@@ -290,9 +300,26 @@ export default class AIController {
       return;
     }
 
-    const dir = normalizeVector(target.x - player.x, target.y - player.y);
-    const accel = PLAYER.ACCELERATION * speedFactor;
-    player.body.setAcceleration(dir.x * accel, dir.y * accel);
+    const maxSpeed = PLAYER.MAX_SPEED * speedFactor;
+    const vx = player.body.velocity.x;
+    const vy = player.body.velocity.y;
+
+    const useSprint = player.fsmState === 'cutting' && dist > 60;
+    const steer = useSprint
+      ? seek(player.x, player.y, vx, vy, target.x, target.y, maxSpeed)
+      : arrive(player.x, player.y, vx, vy, target.x, target.y, maxSpeed, 50);
+
+    player.body.setAcceleration(steer.x, steer.y);
+    player.constrainToField();
+  }
+
+  moveWithShadow(player, markX, markY, anchorX, anchorY, shadowDist, speedFactor = AI.CUT_SPEED_FACTOR) {
+    const maxSpeed = PLAYER.MAX_SPEED * speedFactor;
+    const vx = player.body.velocity.x;
+    const vy = player.body.velocity.y;
+
+    const steer = shadow(player.x, player.y, vx, vy, markX, markY, anchorX, anchorY, shadowDist, maxSpeed);
+    player.body.setAcceleration(steer.x, steer.y);
     player.constrainToField();
   }
 
