@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ultimate Frisbee 2D</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     * {
       margin: 0;
@@ -11,26 +14,218 @@
       box-sizing: border-box;
     }
     body {
-      background: #0a1628;
+      background: #060d1a;
       display: flex;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
       overflow: hidden;
-      font-family: Arial, sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
     #game-container {
-      border-radius: 8px;
+      position: relative;
+      border-radius: 10px;
       overflow: hidden;
-      box-shadow: 0 0 40px rgba(51, 102, 255, 0.3);
+      box-shadow:
+        0 0 0 1px rgba(255, 255, 255, 0.04),
+        0 4px 60px rgba(30, 70, 180, 0.25),
+        0 1px 3px rgba(0, 0, 0, 0.4);
     }
     #game-container canvas {
       display: block;
     }
+
+    /* ── DOM HUD Overlay ── */
+    #game-hud {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      z-index: 10;
+      overflow: hidden;
+      display: none;
+    }
+
+    .hud-glass {
+      background: rgba(6, 13, 26, 0.72);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    /* ── Scoreboard ── */
+    .hud-scoreboard {
+      position: absolute;
+      top: 6px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 5px 28px 7px;
+      border-radius: 14px;
+    }
+    .hud-scoreboard::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 16px;
+      right: 16px;
+      height: 2px;
+      background: linear-gradient(90deg, #3366ff, transparent 35%, transparent 65%, #ff3333);
+      border-radius: 1px;
+      opacity: 0.45;
+    }
+    .hud-team {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .hud-team-label {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .hud-team-blue .hud-team-label { color: #6699ff; }
+    .hud-team-red .hud-team-label  { color: #ff6666; }
+    .hud-team-score {
+      font-size: 24px;
+      font-weight: 800;
+      color: #ffffff;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+      display: inline-block;
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .hud-team-score.score-bump {
+      transform: scale(1.4);
+    }
+    .hud-vs {
+      font-size: 14px;
+      font-weight: 300;
+      color: rgba(255, 255, 255, 0.18);
+      line-height: 1;
+      padding: 0 2px;
+    }
+
+    /* ── Possession chip ── */
+    .hud-possession {
+      position: absolute;
+      top: 46px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 8px;
+      font-weight: 600;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.3);
+      transition: color 0.4s ease;
+      white-space: nowrap;
+    }
+    .hud-possession.poss-blue { color: rgba(102, 153, 255, 0.6); }
+    .hud-possession.poss-red  { color: rgba(255, 102, 102, 0.6); }
+
+    /* ── State bar (bottom) ── */
+    .hud-state {
+      position: absolute;
+      bottom: 5px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 3px 16px 4px;
+      border-radius: 10px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1.2px;
+      color: rgba(255, 255, 255, 0.45);
+      white-space: nowrap;
+      transition: opacity 0.3s;
+    }
+
+    /* ── Center message ── */
+    .hud-message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.8);
+      padding: 18px 48px;
+      border-radius: 16px;
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #ffffff;
+      text-align: center;
+      white-space: pre-line;
+      line-height: 1.45;
+      opacity: 0;
+      pointer-events: none;
+      transition:
+        opacity 0.3s ease-out,
+        transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .hud-message.visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+
+    /* ── Stall warning (top-right) ── */
+    .hud-stall {
+      position: absolute;
+      top: 6px;
+      right: 10px;
+      padding: 4px 12px 5px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      font-variant-numeric: tabular-nums;
+      color: #ffcc44;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition:
+        opacity 0.25s,
+        transform 0.25s,
+        color 0.3s;
+    }
+    .hud-stall.active {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .hud-stall.warn  { color: #ff8844; }
+    .hud-stall.crit  { color: #ff3333; }
+    .hud-stall.crit  { animation: stall-pulse 0.5s ease-in-out infinite alternate; }
+    @keyframes stall-pulse {
+      from { opacity: 0.8; }
+      to   { opacity: 1; transform: scale(1.06); }
+    }
   </style>
 </head>
 <body>
-  <div id="game-container"></div>
+  <div id="game-container">
+    <div id="game-hud">
+      <div class="hud-scoreboard hud-glass">
+        <div class="hud-team hud-team-blue">
+          <span class="hud-team-label">Blue</span>
+          <span class="hud-team-score" id="hud-score-a">0</span>
+        </div>
+        <span class="hud-vs">:</span>
+        <div class="hud-team hud-team-red">
+          <span class="hud-team-score" id="hud-score-b">0</span>
+          <span class="hud-team-label">Red</span>
+        </div>
+      </div>
+      <div class="hud-possession" id="hud-possession"></div>
+      <div class="hud-stall hud-glass" id="hud-stall"></div>
+      <div class="hud-state hud-glass" id="hud-state"></div>
+      <div class="hud-message hud-glass" id="hud-message"></div>
+    </div>
+  </div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

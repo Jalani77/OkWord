@@ -64,7 +64,46 @@ export default class GameScene extends Phaser.Scene {
     this.setupCollisionOverlap();
     this.setupStateListeners();
 
+    this.setupDomHud();
+
     this.gsm.setState(GAME_STATES.KICKOFF_PULL);
+  }
+
+  /**
+   * Binds to the DOM HUD overlay elements defined in index.html and hides
+   * the old Phaser text objects.  Everything below is additive — no existing
+   * rendering or state code is modified.
+   */
+  setupDomHud() {
+    const container = document.getElementById('game-container');
+    if (!container) return;
+
+    this.domHud = container.querySelector('#game-hud');
+    if (!this.domHud) return;
+
+    this.domHud.style.display = '';
+
+    this._domScoreA = this.domHud.querySelector('#hud-score-a');
+    this._domScoreB = this.domHud.querySelector('#hud-score-b');
+    this._domPoss   = this.domHud.querySelector('#hud-possession');
+    this._domState   = this.domHud.querySelector('#hud-state');
+    this._domMsg     = this.domHud.querySelector('#hud-message');
+    this._domStall   = this.domHud.querySelector('#hud-stall');
+
+    this._prevScoreA = -1;
+    this._prevScoreB = -1;
+    this._domMsgTimer = null;
+
+    this.scoreText.setAlpha(0);
+    this.stateText.setAlpha(0);
+    this.possessionIndicator.setAlpha(0);
+    this.messageText.setAlpha(0);
+
+    this.stallText.setStyle({
+      fontFamily: "'Inter', system-ui, sans-serif",
+      fontStyle: 'bold',
+      fontSize: '12px',
+    });
   }
 
   /**
@@ -295,11 +334,11 @@ export default class GameScene extends Phaser.Scene {
     const puller = this.controlledPlayer;
     if (!puller) return;
 
-    this.throwingTeamId = puller.teamId;
     puller.releaseDisc();
     this.disc.throwDisc(this.pullAimAngle, this.pullPower);
 
     const offTeam = this.getOffenseTeam();
+    this.throwingTeamId = offTeam.id;
     this.setControlledPlayerForTeam(offTeam);
 
     this.gsm.setState(GAME_STATES.LIVE_PLAY);
@@ -496,6 +535,8 @@ export default class GameScene extends Phaser.Scene {
         });
       });
     }
+
+    if (this._domMsg) this._updateDomMessage(text, duration);
   }
 
   spawnCatchEffect(x, y) {
@@ -812,6 +853,11 @@ export default class GameScene extends Phaser.Scene {
     } else {
       this.stallText.setVisible(false);
     }
+
+    if (this.stallText.visible) {
+      const c = this.stallManager.getCount();
+      this.stallText.setColor(c < 5 ? '#ffcc44' : c < 8 ? '#ff8844' : '#ff3333');
+    }
   }
 
   drawPowerMeter() {
@@ -842,5 +888,82 @@ export default class GameScene extends Phaser.Scene {
     this.possessionIndicator.setText(`Offense: ${offName}`);
 
     this.pullAimGraphics.clear();
+
+    if (this.domHud) this.updateDomHud();
+  }
+
+  updateDomHud() {
+    const scores = this.scoreManager.getScores();
+
+    if (this._domScoreA && scores.A !== this._prevScoreA) {
+      this._domScoreA.textContent = scores.A;
+      this._domScoreA.classList.remove('score-bump');
+      void this._domScoreA.offsetWidth;
+      this._domScoreA.classList.add('score-bump');
+      setTimeout(() => this._domScoreA.classList.remove('score-bump'), 450);
+      this._prevScoreA = scores.A;
+    }
+    if (this._domScoreB && scores.B !== this._prevScoreB) {
+      this._domScoreB.textContent = scores.B;
+      this._domScoreB.classList.remove('score-bump');
+      void this._domScoreB.offsetWidth;
+      this._domScoreB.classList.add('score-bump');
+      setTimeout(() => this._domScoreB.classList.remove('score-bump'), 450);
+      this._prevScoreB = scores.B;
+    }
+
+    if (this._domPoss) {
+      const offId = this.possession.getOffenseTeamId();
+      const label = offId === TEAMS.A ? 'Blue Offense' : 'Red Offense';
+      this._domPoss.textContent = label;
+      this._domPoss.className = 'hud-possession ' +
+        (offId === TEAMS.A ? 'poss-blue' : 'poss-red');
+    }
+
+    if (this._domState) {
+      const state = this.gsm.getState();
+      const labels = {
+        [GAME_STATES.KICKOFF_PULL]: 'Pull \u2014 Aim & click to throw',
+        [GAME_STATES.LIVE_PLAY]: 'Live Play \u2014 Drag to throw',
+        [GAME_STATES.TURNOVER]: 'Turnover',
+        [GAME_STATES.SCORE]: 'Score!',
+        [GAME_STATES.GAME_OVER]: 'Game Over',
+        [GAME_STATES.RESET_AFTER_SCORE]: 'Resetting\u2026',
+      };
+      this._domState.textContent = labels[state] || '';
+    }
+
+    if (this._domStall) {
+      const active = this.stallManager.isActive();
+      const count = this.stallManager.getCount();
+      this._domStall.textContent = active ? `Stall ${count}` : '';
+      this._domStall.classList.toggle('active', active);
+      this._domStall.classList.toggle('warn', active && count >= 5 && count < 8);
+      this._domStall.classList.toggle('crit', active && count >= 8);
+    }
+  }
+
+  _updateDomMessage(text, duration) {
+    if (!this._domMsg) return;
+
+    if (this._domMsgTimer) {
+      clearTimeout(this._domMsgTimer);
+      this._domMsgTimer = null;
+    }
+
+    if (text) {
+      this._domMsg.textContent = text;
+      this._domMsg.classList.remove('visible');
+      void this._domMsg.offsetWidth;
+      this._domMsg.classList.add('visible');
+
+      if (duration > 0) {
+        this._domMsgTimer = setTimeout(() => {
+          this._domMsg.classList.remove('visible');
+        }, duration);
+      }
+    } else {
+      this._domMsg.classList.remove('visible');
+    }
   }
 }

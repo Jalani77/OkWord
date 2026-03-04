@@ -1,4 +1,4 @@
-import { DISC, DISC_STATES, FIELD_BOUNDS } from '../utils/Constants.js';
+import { DISC, DISC_STATES, FIELD_BOUNDS, PLAYER } from '../utils/Constants.js';
 
 export default class Disc {
   constructor(scene) {
@@ -12,7 +12,8 @@ export default class Disc {
     this.sprite.setDepth(10);
 
     scene.physics.add.existing(this.sprite);
-    this.sprite.body.setCircle(DISC.RADIUS);
+    const bodyOffset = DISC.RADIUS - PLAYER.CATCH_RADIUS;
+    this.sprite.body.setCircle(PLAYER.CATCH_RADIUS, bodyOffset, bodyOffset);
     this.sprite.body.moves = false;
 
     this.velocityX = 0;
