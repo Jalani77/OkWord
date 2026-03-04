@@ -49,7 +49,7 @@ export default class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     this.add.text(cx, controlsY + 30,
-      'WASD / Arrows — Move   |   Mouse — Aim   |   Click & Hold — Charge Throw   |   Release — Throw', controlStyle
+      'WASD / Arrows — Move   |   Click & Drag — Aim + Set Power   |   Release — Throw', controlStyle
     ).setOrigin(0.5);
 
     this.add.text(cx, controlsY + 55,

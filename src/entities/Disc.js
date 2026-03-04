@@ -6,9 +6,14 @@ export default class Disc {
     this.state = DISC_STATES.HELD;
     this.ownerId = null;
     this.ownerTeamId = null;
+    this.lastThrowerId = null;
 
     this.sprite = scene.add.circle(0, 0, DISC.RADIUS, DISC.COLOR);
     this.sprite.setDepth(10);
+
+    scene.physics.add.existing(this.sprite);
+    this.sprite.body.setCircle(DISC.RADIUS);
+    this.sprite.body.moves = false;
 
     this.velocityX = 0;
     this.velocityY = 0;
@@ -34,6 +39,7 @@ export default class Disc {
     this.state = DISC_STATES.HELD;
     this.ownerId = player.id;
     this.ownerTeamId = player.teamId;
+    this.lastThrowerId = null;
     this.sprite.setPosition(player.x, player.y);
     this.velocityX = 0;
     this.velocityY = 0;
@@ -41,6 +47,7 @@ export default class Disc {
   }
 
   throwDisc(angle, power) {
+    this.lastThrowerId = this.ownerId;
     this.state = DISC_STATES.THROWN;
     this.power = power;
     this.velocityX = Math.cos(angle) * power;
@@ -75,8 +82,9 @@ export default class Disc {
     const dt = delta / 1000;
     this.flightTime += dt;
 
-    this.velocityX *= DISC.DRAG_FACTOR;
-    this.velocityY *= DISC.DRAG_FACTOR;
+    const dragThisFrame = Math.pow(DISC.DRAG_PER_SECOND, dt);
+    this.velocityX *= dragThisFrame;
+    this.velocityY *= dragThisFrame;
     this.velocityY += DISC.GRAVITY * dt;
 
     this.sprite.x += this.velocityX * dt;
@@ -103,6 +111,10 @@ export default class Disc {
     );
   }
 
+  canBeCaught() {
+    return this.state === DISC_STATES.THROWN && this.flightTime >= DISC.MIN_FLIGHT_TIME;
+  }
+
   drawPowerMeter(playerX, playerY) {
     this.powerGraphics.clear();
     if (!this.isCharging) return;
@@ -125,7 +137,6 @@ export default class Disc {
     this.trailGraphics.clear();
     if (this.state !== DISC_STATES.THROWN) return;
 
-    this.trailGraphics.fillStyle(0xffffff, 0.3);
     const speed = Math.sqrt(this.velocityX * this.velocityX + this.velocityY * this.velocityY);
     const normFactor = Math.min(speed / DISC.MAX_POWER, 1);
     for (let i = 1; i <= 4; i++) {

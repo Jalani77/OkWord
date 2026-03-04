@@ -12,9 +12,9 @@ import CollisionSystem from '../systems/CollisionSystem.js';
 import AIController from '../systems/AIController.js';
 import {
   GAME_WIDTH, GAME_HEIGHT, GAME_STATES, DISC_STATES,
-  TEAMS, FIELD_BOUNDS, FIELD, PLAYER, PULL, STALL
+  TEAMS, FIELD_BOUNDS, FIELD, PLAYER, PULL, DISC
 } from '../utils/Constants.js';
-import { distanceBetween, angleBetween } from '../utils/MathHelpers.js';
+import { distanceBetween, angleBetween, clamp } from '../utils/MathHelpers.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -52,15 +52,31 @@ export default class GameScene extends Phaser.Scene {
     this.aimGraphics = this.add.graphics();
     this.aimGraphics.setDepth(15);
 
+    this.dragLineGraphics = this.add.graphics();
+    this.dragLineGraphics.setDepth(15);
+
     this.effectsGraphics = this.add.graphics();
     this.effectsGraphics.setDepth(18);
     this.particles = [];
 
     this.setupUI();
     this.setupCallbacks();
+    this.setupCollisionOverlap();
     this.setupStateListeners();
 
     this.gsm.setState(GAME_STATES.KICKOFF_PULL);
+  }
+
+  /**
+   * Registers Phaser physics overlap between the disc and all player sprites.
+   * This replaces the manual per-frame distance loop that was in updateLivePlay.
+   */
+  setupCollisionOverlap() {
+    this.collision.setupPhysicsOverlap(
+      this.disc,
+      this.getAllPlayers(),
+      () => this.throwingTeamId
+    );
   }
 
   setupUI() {
@@ -241,22 +257,35 @@ export default class GameScene extends Phaser.Scene {
 
     if (state !== GAME_STATES.LIVE_PLAY) return;
 
-    if (this.controlledPlayer && this.controlledPlayer.hasDisc && this.disc.isCharging) {
+    if (!this.controlledPlayer || !this.controlledPlayer.hasDisc) return;
+
+    const drag = this.input_.getDragVector();
+
+    if (drag.magnitude >= DISC.DRAG_THROW_DEADZONE) {
+      this.executeThrow(drag.angle, drag.power);
+    } else if (this.disc.isCharging) {
       const pointer = this.input_.getPointerPosition();
       const angle = angleBetween(
         { x: this.controlledPlayer.x, y: this.controlledPlayer.y },
         { x: pointer.x, y: pointer.y }
       );
       const power = this.disc.getChargePower();
-
-      this.throwingTeamId = this.controlledPlayer.teamId;
-      this.spawnThrowEffect(this.controlledPlayer.x, this.controlledPlayer.y, angle);
-      this.controlledPlayer.releaseDisc();
-      this.disc.throwDisc(angle, power);
-      this.stallManager.reset();
-
-      this.switchToClosestNonHandler();
+      this.executeThrow(angle, power);
     }
+  }
+
+  executeThrow(angle, power) {
+    if (!this.controlledPlayer || !this.controlledPlayer.hasDisc) return;
+
+    this.throwingTeamId = this.controlledPlayer.teamId;
+    this.spawnThrowEffect(this.controlledPlayer.x, this.controlledPlayer.y, angle);
+    this.controlledPlayer.releaseDisc();
+    this.disc.throwDisc(angle, power);
+    this.disc.isCharging = false;
+    this.disc.chargePower = 0;
+    this.stallManager.reset();
+
+    this.switchToClosestNonHandler();
   }
 
   executePull() {
@@ -297,6 +326,7 @@ export default class GameScene extends Phaser.Scene {
     const power = Math.min(dist * 1.5, 450);
 
     this.throwingTeamId = handler.teamId;
+    this.spawnThrowEffect(handler.x, handler.y, angle);
     handler.releaseDisc();
     this.disc.throwDisc(angle, power);
     this.stallManager.reset();
@@ -343,6 +373,8 @@ export default class GameScene extends Phaser.Scene {
   // --- Catch / Turnover ---
 
   handleCatch(player) {
+    if (this.disc.state !== DISC_STATES.THROWN) return;
+
     const offTeam = this.getOffenseTeam();
     this.spawnCatchEffect(player.x, player.y);
 
@@ -367,6 +399,8 @@ export default class GameScene extends Phaser.Scene {
   }
 
   handleInterception(player) {
+    if (this.disc.state !== DISC_STATES.THROWN) return;
+    this.spawnCatchEffect(player.x, player.y);
     this.giveDiscToPlayer(player);
     this.handleTurnover('INTERCEPTION');
   }
@@ -604,7 +638,6 @@ export default class GameScene extends Phaser.Scene {
   }
 
   updateLivePlay(delta) {
-    // Move controlled player
     if (this.controlledPlayer && !this.controlledPlayer.isPivoting) {
       this.controlledPlayer.moveWithInput(this.input_.cursors, this.input_.wasd);
     }
@@ -614,29 +647,22 @@ export default class GameScene extends Phaser.Scene {
       this.controlledPlayer.updatePivotAngle(pointer.x, pointer.y);
     }
 
-    // Update disc charge
     if (this.disc.isCharging) {
       this.disc.updateCharge(delta);
     }
 
-    // Update disc physics
     this.discPhysics.update(delta);
     this.disc.drawTrail();
 
-    // Disc on ground = turnover
+    // Disc on ground = turnover (physics overlap won't fire for grounded disc)
     if (this.disc.state === DISC_STATES.GROUND) {
       this.handleTurnover('DROP');
       return;
     }
 
-    // Check disc-player collisions
-    const offTeam = this.getOffenseTeam();
-    const defTeam = this.getDefenseTeam();
-    this.collision.checkDiscPlayerCollisions(
-      this.disc, offTeam.players, defTeam.players, this.throwingTeamId
-    );
+    // Overlap is handled by physics.add.overlap registered in setupCollisionOverlap.
+    // No manual collision loop needed here.
 
-    // Keep disc on handler
     if (this.disc.state === DISC_STATES.HELD) {
       const handler = this.getAllPlayers().find(p => p.hasDisc);
       if (handler) {
@@ -646,6 +672,8 @@ export default class GameScene extends Phaser.Scene {
 
     // Stall count
     if (this.disc.state === DISC_STATES.HELD) {
+      const offTeam = this.getOffenseTeam();
+      const defTeam = this.getDefenseTeam();
       const handler = offTeam.players.find(p => p.hasDisc);
       if (handler) {
         const isMarked = this.collision.checkDefenderMark(handler, defTeam.players);
@@ -660,12 +688,13 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // AI
+    const offTeam = this.getOffenseTeam();
+    const defTeam = this.getDefenseTeam();
     const offHandler = offTeam.players.find(p => p.hasDisc);
     this.ai.updateOffenseAI(offTeam.players, offHandler, this.disc, delta);
     this.ai.updateDefenseAI(defTeam.players, offTeam.players, offHandler, this.disc, delta);
 
-    // AI handler auto-throw under pressure
+    // AI handler auto-throw under stall pressure
     if (offHandler && !offHandler.isControlled && offHandler.hasDisc && this.stallManager.getCount() >= 7) {
       const target = this.ai.chooseThrowTarget(offHandler, offTeam.players, defTeam.players);
       if (target) {
@@ -679,17 +708,73 @@ export default class GameScene extends Phaser.Scene {
         );
         const power = Math.min(dist * 1.2, 400);
         this.throwingTeamId = offHandler.teamId;
+        this.spawnThrowEffect(offHandler.x, offHandler.y, angle);
         offHandler.releaseDisc();
         this.disc.throwDisc(angle, power);
         this.stallManager.reset();
       }
     }
 
-    // Draw
     this.drawPlayers();
+    this.drawDragLine();
     this.drawAim();
     this.drawStallCounter();
     this.drawPowerMeter();
+  }
+
+  /**
+   * Draws a live drag-direction indicator from the handler while the
+   * player is holding the mouse button and dragging to aim a throw.
+   */
+  drawDragLine() {
+    this.dragLineGraphics.clear();
+    if (!this.controlledPlayer || !this.controlledPlayer.hasDisc) return;
+    if (!this.input_.isDragging()) return;
+
+    const drag = this.input_.getDragVector();
+    if (drag.magnitude < DISC.DRAG_THROW_DEADZONE) return;
+
+    const px = this.controlledPlayer.x;
+    const py = this.controlledPlayer.y;
+    const powerRatio = clamp(
+      (drag.power - DISC.MIN_POWER) / (DISC.MAX_POWER - DISC.MIN_POWER), 0, 1
+    );
+    const lineLen = 40 + powerRatio * 60;
+
+    const endX = px + Math.cos(drag.angle) * lineLen;
+    const endY = py + Math.sin(drag.angle) * lineLen;
+
+    const color = powerRatio < 0.5 ? 0x00ff00 : powerRatio < 0.8 ? 0xffff00 : 0xff3333;
+    this.dragLineGraphics.lineStyle(3, color, 0.8);
+    this.dragLineGraphics.beginPath();
+    this.dragLineGraphics.moveTo(px, py);
+    this.dragLineGraphics.lineTo(endX, endY);
+    this.dragLineGraphics.strokePath();
+
+    const arrowLen = 8;
+    const arrowAngle = 0.4;
+    this.dragLineGraphics.beginPath();
+    this.dragLineGraphics.moveTo(endX, endY);
+    this.dragLineGraphics.lineTo(
+      endX - Math.cos(drag.angle - arrowAngle) * arrowLen,
+      endY - Math.sin(drag.angle - arrowAngle) * arrowLen
+    );
+    this.dragLineGraphics.moveTo(endX, endY);
+    this.dragLineGraphics.lineTo(
+      endX - Math.cos(drag.angle + arrowAngle) * arrowLen,
+      endY - Math.sin(drag.angle + arrowAngle) * arrowLen
+    );
+    this.dragLineGraphics.strokePath();
+
+    // Power bar under the drag line
+    const barW = 40;
+    const barH = 4;
+    const bx = px - barW / 2;
+    const by = py - 28;
+    this.dragLineGraphics.fillStyle(0x222222, 0.7);
+    this.dragLineGraphics.fillRect(bx, by, barW, barH);
+    this.dragLineGraphics.fillStyle(color, 0.9);
+    this.dragLineGraphics.fillRect(bx, by, barW * powerRatio, barH);
   }
 
   drawPlayers() {
@@ -699,6 +784,7 @@ export default class GameScene extends Phaser.Scene {
   drawAim() {
     this.aimGraphics.clear();
     if (!this.controlledPlayer || !this.controlledPlayer.hasDisc) return;
+    if (this.input_.isDragging()) return;
 
     const pointer = this.input_.getPointerPosition();
     const px = this.controlledPlayer.x;
@@ -706,7 +792,6 @@ export default class GameScene extends Phaser.Scene {
     const angle = angleBetween({ x: px, y: py }, { x: pointer.x, y: pointer.y });
     const len = 50;
 
-    this.aimGraphics.lineStyle(1, 0xffffff, 0.4);
     for (let i = 0; i < 6; i++) {
       const t = i / 5;
       const dotX = px + Math.cos(angle) * len * t;
@@ -730,7 +815,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   drawPowerMeter() {
-    if (this.controlledPlayer && this.controlledPlayer.hasDisc) {
+    if (this.controlledPlayer && this.controlledPlayer.hasDisc && this.disc.isCharging) {
       this.disc.drawPowerMeter(this.controlledPlayer.x, this.controlledPlayer.y);
     } else {
       this.disc.powerGraphics.clear();
@@ -743,8 +828,8 @@ export default class GameScene extends Phaser.Scene {
 
     const state = this.gsm.getState();
     const stateLabels = {
-      [GAME_STATES.KICKOFF_PULL]: 'PULL — Aim and click to throw',
-      [GAME_STATES.LIVE_PLAY]: 'LIVE PLAY',
+      [GAME_STATES.KICKOFF_PULL]: 'PULL -- Aim and click to throw',
+      [GAME_STATES.LIVE_PLAY]: 'LIVE PLAY -- Drag to throw',
       [GAME_STATES.TURNOVER]: 'TURNOVER',
       [GAME_STATES.SCORE]: 'SCORE!',
       [GAME_STATES.GAME_OVER]: 'GAME OVER',
