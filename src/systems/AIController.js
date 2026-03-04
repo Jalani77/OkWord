@@ -8,6 +8,53 @@ export default class AIController {
     this.targetPositions = {};
   }
 
+  // ------------------------------------------------------------------
+  //  SETUP phase — all players walk to assigned positions at WALK_SPEED
+  // ------------------------------------------------------------------
+
+  updateSetupMovement(players, delta) {
+    for (const player of players) {
+      if (player.isControlled) continue;
+
+      const tx = player.setupTargetX;
+      const ty = player.setupTargetY;
+      const dist = distanceBetween({ x: player.x, y: player.y }, { x: tx, y: ty });
+
+      if (dist < AI.SETUP_ARRIVE_THRESHOLD) {
+        player.body.setVelocity(0, 0);
+        player.body.setAcceleration(0, 0);
+        continue;
+      }
+
+      const dir = normalizeVector(tx - player.x, ty - player.y);
+      const walkAccel = PLAYER.WALK_SPEED * 4;
+      player.body.setMaxVelocity(PLAYER.WALK_SPEED, PLAYER.WALK_SPEED);
+      player.body.setAcceleration(dir.x * walkAccel, dir.y * walkAccel);
+      player.constrainToField();
+    }
+  }
+
+  isSetupComplete(allPlayers) {
+    for (const player of allPlayers) {
+      const dist = distanceBetween(
+        { x: player.x, y: player.y },
+        { x: player.setupTargetX, y: player.setupTargetY }
+      );
+      if (dist > AI.SETUP_ARRIVE_THRESHOLD) return false;
+    }
+    return true;
+  }
+
+  restoreMaxSpeed(players) {
+    for (const player of players) {
+      player.body.setMaxVelocity(PLAYER.MAX_SPEED, PLAYER.MAX_SPEED);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  LIVE PLAY — offense
+  // ------------------------------------------------------------------
+
   updateOffenseAI(players, handler, disc, delta) {
     for (const player of players) {
       if (player.isControlled || player.hasDisc) continue;
@@ -17,12 +64,19 @@ export default class AIController {
       }
       this.decisionTimers[player.id] += delta;
 
-      if (this.decisionTimers[player.id] > AI.DECISION_INTERVAL) {
+      const interval = player.fsmState === 'cutting'
+        ? AI.CUT_DECISION_INTERVAL
+        : AI.DECISION_INTERVAL;
+
+      if (this.decisionTimers[player.id] > interval) {
         this.decisionTimers[player.id] = 0;
         this.decideOffenseTarget(player, handler, players);
       }
 
-      this.moveTowardTarget(player, delta);
+      const speed = player.fsmState === 'cutting'
+        ? AI.CUT_SPRINT_FACTOR
+        : AI.CUT_SPEED_FACTOR;
+      this.moveTowardTarget(player, delta, speed);
     }
   }
 
@@ -41,7 +95,7 @@ export default class AIController {
         this.decideDefenseTarget(defender, offensePlayers, handler, disc, i);
       }
 
-      this.moveTowardTarget(defender, delta);
+      this.moveTowardTarget(defender, delta, AI.CUT_SPEED_FACTOR);
 
       if (disc && disc.state === DISC_STATES.THROWN) {
         this.tryIntercept(defender, disc, delta);
@@ -49,7 +103,16 @@ export default class AIController {
     }
   }
 
+  // ------------------------------------------------------------------
+  //  FSM-aware target selection
+  // ------------------------------------------------------------------
+
   decideOffenseTarget(player, handler, teammates) {
+    if (player.fsmState === 'cutting') {
+      this.decideCutTarget(player, handler, teammates);
+      return;
+    }
+
     const fieldCenterX = FIELD.OFFSET_X + FIELD.WIDTH / 2;
     const fieldCenterY = FIELD.OFFSET_Y + FIELD.HEIGHT / 2;
 
@@ -65,23 +128,6 @@ export default class AIController {
     } else {
       targetX = fieldCenterX + randomInRange(-200, 200);
       targetY = FIELD.OFFSET_Y + randomInRange(40, FIELD.HEIGHT - 40);
-
-      let tooClose = false;
-      for (const mate of teammates) {
-        if (mate.id === player.id) continue;
-        const dist = distanceBetween(
-          { x: targetX, y: targetY },
-          { x: mate.x, y: mate.y }
-        );
-        if (dist < AI.SPACING_DISTANCE) {
-          tooClose = true;
-          break;
-        }
-      }
-      if (tooClose) {
-        targetX += randomInRange(-60, 60);
-        targetY += randomInRange(-60, 60);
-      }
     }
 
     targetX = Math.max(FIELD_BOUNDS.LEFT + 20, Math.min(FIELD_BOUNDS.RIGHT - 20, targetX));
@@ -90,7 +136,80 @@ export default class AIController {
     this.targetPositions[player.id] = { x: targetX, y: targetY };
   }
 
+  decideCutTarget(player, handler, teammates) {
+    const fieldCenterY = FIELD.OFFSET_Y + FIELD.HEIGHT / 2;
+
+    let bestX = 0;
+    let bestY = 0;
+    let bestScore = -Infinity;
+
+    const allDefenders = this.scene.getDefenseTeam
+      ? this.scene.getDefenseTeam().players
+      : [];
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      let candX, candY;
+
+      if (handler) {
+        const upfield = randomInRange(60, 220);
+        const lateral = randomInRange(-160, 160);
+        candX = handler.x + upfield * (Math.random() > 0.5 ? 1 : -1);
+        candY = handler.y + lateral;
+      } else {
+        candX = FIELD.OFFSET_X + randomInRange(FIELD.ENDZONE_WIDTH + 20, FIELD.WIDTH - FIELD.ENDZONE_WIDTH - 20);
+        candY = FIELD.OFFSET_Y + randomInRange(30, FIELD.HEIGHT - 30);
+      }
+
+      candX = Math.max(FIELD_BOUNDS.LEFT + 20, Math.min(FIELD_BOUNDS.RIGHT - 20, candX));
+      candY = Math.max(FIELD_BOUNDS.TOP + 20, Math.min(FIELD_BOUNDS.BOTTOM - 20, candY));
+
+      let minDefDist = Infinity;
+      for (const def of allDefenders) {
+        const dd = distanceBetween({ x: candX, y: candY }, { x: def.x, y: def.y });
+        if (dd < minDefDist) minDefDist = dd;
+      }
+
+      let minMateDist = Infinity;
+      for (const mate of teammates) {
+        if (mate.id === player.id) continue;
+        const md = distanceBetween({ x: candX, y: candY }, { x: mate.x, y: mate.y });
+        if (md < minMateDist) minMateDist = md;
+      }
+
+      const spacingBonus = minMateDist > AI.SPACING_DISTANCE ? 30 : -20;
+      const score = minDefDist + spacingBonus;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestX = candX;
+        bestY = candY;
+      }
+    }
+
+    this.targetPositions[player.id] = { x: bestX, y: bestY };
+  }
+
   decideDefenseTarget(defender, offensePlayers, handler, disc, index) {
+    if (defender.fsmState === 'marking' && defender.assignedMatchup) {
+      const matchup = defender.assignedMatchup;
+
+      if (handler && handler.hasDisc) {
+        const laneAngle = angleBetween(matchup, handler);
+        const blockDist = randomInRange(AI.MARK_RANGE_MIN, AI.MARK_RANGE_MAX) * 0.35;
+        this.targetPositions[defender.id] = {
+          x: matchup.x + Math.cos(laneAngle) * blockDist + randomInRange(-4, 4),
+          y: matchup.y + Math.sin(laneAngle) * blockDist + randomInRange(-4, 4),
+        };
+      } else {
+        const drift = randomInRange(AI.MARK_RANGE_MIN * 0.3, AI.MARK_RANGE_MIN * 0.6);
+        this.targetPositions[defender.id] = {
+          x: matchup.x + randomInRange(-drift, drift),
+          y: matchup.y + randomInRange(-drift, drift),
+        };
+      }
+      return;
+    }
+
     if (index === 0 && handler && handler.hasDisc) {
       const angle = angleBetween(handler, defender);
       this.targetPositions[defender.id] = {
@@ -102,12 +221,46 @@ export default class AIController {
 
     const matchup = offensePlayers[index % offensePlayers.length];
     if (matchup) {
+      const drift = randomInRange(AI.MARK_RANGE_MIN * 0.3, AI.MARK_RANGE_MIN * 0.6);
       this.targetPositions[defender.id] = {
-        x: matchup.x + randomInRange(-20, 20),
-        y: matchup.y + randomInRange(-20, 20),
+        x: matchup.x + randomInRange(-drift, drift),
+        y: matchup.y + randomInRange(-drift, drift),
       };
     }
   }
+
+  // ------------------------------------------------------------------
+  //  Matchup assignment
+  // ------------------------------------------------------------------
+
+  assignMatchups(defenders, offensePlayers) {
+    const available = [...offensePlayers];
+
+    for (const def of defenders) {
+      let closest = null;
+      let minDist = Infinity;
+
+      for (const off of available) {
+        const d = distanceBetween({ x: def.x, y: def.y }, { x: off.x, y: off.y });
+        if (d < minDist) {
+          minDist = d;
+          closest = off;
+        }
+      }
+
+      def.assignedMatchup = closest;
+      def.fsmState = 'marking';
+
+      if (closest) {
+        const idx = available.indexOf(closest);
+        if (idx !== -1) available.splice(idx, 1);
+      }
+    }
+  }
+
+  // ------------------------------------------------------------------
+  //  Movement helpers (unchanged signatures)
+  // ------------------------------------------------------------------
 
   tryIntercept(defender, disc, delta) {
     const dist = distanceBetween(
@@ -120,7 +273,7 @@ export default class AIController {
     }
   }
 
-  moveTowardTarget(player, delta) {
+  moveTowardTarget(player, delta, speedFactor = AI.CUT_SPEED_FACTOR) {
     const target = this.targetPositions[player.id];
     if (!target) {
       player.body.setAcceleration(0, 0);
@@ -138,7 +291,7 @@ export default class AIController {
     }
 
     const dir = normalizeVector(target.x - player.x, target.y - player.y);
-    const accel = PLAYER.ACCELERATION * AI.CUT_SPEED_FACTOR;
+    const accel = PLAYER.ACCELERATION * speedFactor;
     player.body.setAcceleration(dir.x * accel, dir.y * accel);
     player.constrainToField();
   }

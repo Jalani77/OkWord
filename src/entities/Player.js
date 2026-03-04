@@ -14,11 +14,23 @@ export default class Player {
     this.anchorY = 0;
     this.isControlled = false;
 
-    const color = teamId === 'A' ? PLAYER.TEAM_A_COLOR : PLAYER.TEAM_B_COLOR;
+    this.fsmState = 'idle';
+    this.assignedMatchup = null;
+    this.setupTargetX = 0;
+    this.setupTargetY = 0;
+    this.reticlePhase = 0;
 
-    this.sprite = scene.add.circle(x, y, PLAYER.RADIUS, color);
+    this.teamColor = teamId === 'A' ? PLAYER.TEAM_A_COLOR : PLAYER.TEAM_B_COLOR;
+
+    if (scene.textures.exists('player_sprite')) {
+      this.sprite = scene.add.sprite(x, y, 'player_sprite');
+      this.sprite.setDisplaySize(PLAYER.RADIUS * 2, PLAYER.RADIUS * 2);
+      this.sprite.setTint(this.teamColor);
+    } else {
+      this.sprite = scene.add.circle(x, y, PLAYER.RADIUS, this.teamColor);
+    }
+
     scene.physics.add.existing(this.sprite);
-
     this.sprite.body.setCircle(PLAYER.RADIUS);
     this.sprite.body.setCollideWorldBounds(false);
     this.sprite.body.setMaxVelocity(PLAYER.MAX_SPEED, PLAYER.MAX_SPEED);
@@ -132,8 +144,36 @@ export default class Player {
     this.directionGraphics.clear();
 
     if (this.isControlled) {
-      this.outlineGraphics.lineStyle(2, PLAYER.CONTROLLED_OUTLINE, 1);
-      this.outlineGraphics.strokeCircle(this.sprite.x, this.sprite.y, PLAYER.RADIUS + 3);
+      this.reticlePhase += 0.04;
+      const pulse = 1 + Math.sin(this.reticlePhase * 2) * 0.06;
+      const r = (PLAYER.RADIUS + 9) * pulse;
+      const bk = 7;
+      const gap = 2;
+      const sx = this.sprite.x;
+      const sy = this.sprite.y;
+      const col = PLAYER.RETICLE_COLOR;
+
+      this.outlineGraphics.lineStyle(1.5, col, 0.55);
+      this.outlineGraphics.strokeCircle(sx, sy, (PLAYER.RADIUS + 4) * pulse);
+
+      this.outlineGraphics.lineStyle(2, col, 0.85);
+      const corners = [
+        { cx: sx - r, cy: sy - r, dx: bk, dy: 0, dx2: 0, dy2: bk },
+        { cx: sx + r, cy: sy - r, dx: -bk, dy: 0, dx2: 0, dy2: bk },
+        { cx: sx - r, cy: sy + r, dx: bk, dy: 0, dx2: 0, dy2: -bk },
+        { cx: sx + r, cy: sy + r, dx: -bk, dy: 0, dx2: 0, dy2: -bk },
+      ];
+      for (const c of corners) {
+        this.outlineGraphics.beginPath();
+        this.outlineGraphics.moveTo(c.cx + c.dx, c.cy);
+        this.outlineGraphics.lineTo(c.cx, c.cy);
+        this.outlineGraphics.lineTo(c.cx, c.cy + c.dy2);
+        this.outlineGraphics.strokePath();
+      }
+
+      const glowAlpha = 0.12 + Math.sin(this.reticlePhase * 3) * 0.06;
+      this.outlineGraphics.fillStyle(col, glowAlpha);
+      this.outlineGraphics.fillCircle(sx, sy, PLAYER.RADIUS + 6);
     }
 
     if (this.isPivoting && this.hasDisc) {
@@ -146,6 +186,39 @@ export default class Player {
       this.directionGraphics.lineTo(endX, endY);
       this.directionGraphics.strokePath();
     }
+  }
+
+  clampVelocity(maxSpeed = PLAYER.MAX_SPEED) {
+    const vx = this.sprite.body.velocity.x;
+    const vy = this.sprite.body.velocity.y;
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    if (speed > maxSpeed) {
+      const scale = maxSpeed / speed;
+      this.sprite.body.setVelocity(vx * scale, vy * scale);
+    }
+  }
+
+  tweenToPosition(x, y, duration = 800, onComplete) {
+    this.sprite.body.setVelocity(0, 0);
+    this.sprite.body.setAcceleration(0, 0);
+
+    this.scene.tweens.add({
+      targets: this.sprite,
+      x, y,
+      duration,
+      ease: 'Sine.easeInOut',
+      onUpdate: () => {
+        if (this.sprite.body) {
+          this.sprite.body.reset(this.sprite.x, this.sprite.y);
+        }
+      },
+      onComplete: () => {
+        if (this.sprite.body) {
+          this.sprite.body.reset(x, y);
+        }
+        if (onComplete) onComplete();
+      },
+    });
   }
 
   destroy() {
