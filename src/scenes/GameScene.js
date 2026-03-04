@@ -65,8 +65,10 @@ export default class GameScene extends Phaser.Scene {
     this.setupStateListeners();
 
     this.setupDomHud();
+    this.setupCamera();
 
-    this.gsm.setState(GAME_STATES.KICKOFF_PULL);
+    this._setupNextState = GAME_STATES.KICKOFF_PULL;
+    this.gsm.setState(GAME_STATES.SETUP);
   }
 
   /**
@@ -104,6 +106,85 @@ export default class GameScene extends Phaser.Scene {
       fontStyle: 'bold',
       fontSize: '12px',
     });
+  }
+
+  setupCamera() {
+    this.cameras.main.setZoom(1.15);
+    this.cameras.main.setBounds(
+      FIELD_BOUNDS.LEFT - 10, FIELD_BOUNDS.TOP - 10,
+      FIELD.WIDTH + 20, FIELD.HEIGHT + 20
+    );
+    this.cameras.main.setDeadzone(180, 100);
+
+    this.scoreText.setScrollFactor(0);
+    this.stateText.setScrollFactor(0);
+    this.possessionIndicator.setScrollFactor(0);
+    this.messageText.setScrollFactor(0);
+  }
+
+  updateCameraFollow() {
+    if (!this.controlledPlayer) return;
+
+    const cam = this.cameras.main;
+    if (!cam._follow || cam._follow !== this.controlledPlayer.sprite) {
+      cam.startFollow(this.controlledPlayer.sprite, true, 0.08, 0.08);
+    }
+  }
+
+  enterSetup() {
+    this.stallManager.reset();
+    this.ai.resetTimers();
+
+    const offTeam = this.getOffenseTeam();
+    const defTeam = this.getDefenseTeam();
+    const forPull = this._setupNextState === GAME_STATES.KICKOFF_PULL;
+
+    offTeam.assignSetupTargets(forPull);
+    defTeam.assignSetupTargets(forPull);
+
+    if (!this.controlledPlayer) {
+      this.setControlledPlayerForTeam(offTeam);
+    }
+  }
+
+  updateSetup(delta) {
+    const allPlayers = this.getAllPlayers();
+    this.ai.updateSetupMovement(allPlayers, delta);
+
+    if (this.controlledPlayer) {
+      const tx = this.controlledPlayer.setupTargetX;
+      const ty = this.controlledPlayer.setupTargetY;
+      const dist = distanceBetween(
+        { x: this.controlledPlayer.x, y: this.controlledPlayer.y },
+        { x: tx, y: ty }
+      );
+      if (dist > 8) {
+        const dir = { x: tx - this.controlledPlayer.x, y: ty - this.controlledPlayer.y };
+        const mag = Math.sqrt(dir.x * dir.x + dir.y * dir.y);
+        const walkAccel = PLAYER.WALK_SPEED * 4;
+        this.controlledPlayer.body.setMaxVelocity(PLAYER.WALK_SPEED, PLAYER.WALK_SPEED);
+        this.controlledPlayer.body.setAcceleration(
+          (dir.x / mag) * walkAccel,
+          (dir.y / mag) * walkAccel
+        );
+        this.controlledPlayer.constrainToField();
+      } else {
+        this.controlledPlayer.body.setVelocity(0, 0);
+        this.controlledPlayer.body.setAcceleration(0, 0);
+      }
+    }
+
+    if (this.disc.state === DISC_STATES.HELD) {
+      const handler = this.getAllPlayers().find(p => p.hasDisc);
+      if (handler) this.disc.setPosition(handler.x, handler.y);
+    }
+
+    this.drawPlayers();
+
+    if (this.ai.isSetupComplete(allPlayers)) {
+      this.ai.restoreMaxSpeed(allPlayers);
+      this.gsm.setState(this._setupNextState);
+    }
   }
 
   /**
@@ -159,6 +240,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupStateListeners() {
+    this.gsm.on(GAME_STATES.SETUP, () => this.enterSetup());
     this.gsm.on(GAME_STATES.KICKOFF_PULL, () => this.enterPull());
     this.gsm.on(GAME_STATES.LIVE_PLAY, () => this.enterLivePlay());
     this.gsm.on(GAME_STATES.TURNOVER, () => this.enterTurnover());
@@ -195,6 +277,15 @@ export default class GameScene extends Phaser.Scene {
 
   enterLivePlay() {
     this.showMessage('');
+
+    const offTeam = this.getOffenseTeam();
+    const defTeam = this.getDefenseTeam();
+
+    offTeam.players.forEach(p => {
+      p.fsmState = p.hasDisc ? 'handler' : 'cutting';
+    });
+
+    this.ai.assignMatchups(defTeam.players, offTeam.players);
   }
 
   enterTurnover() {
@@ -213,9 +304,10 @@ export default class GameScene extends Phaser.Scene {
     this.stallManager.reset();
     this.ai.resetTimers();
 
-    this.time.delayedCall(500, () => {
+    this.time.delayedCall(1200, () => {
       if (this.gsm.is(GAME_STATES.TURNOVER)) {
-        this.gsm.setState(GAME_STATES.LIVE_PLAY);
+        this._setupNextState = GAME_STATES.LIVE_PLAY;
+        this.gsm.setState(GAME_STATES.SETUP);
       }
     });
   }
@@ -247,7 +339,8 @@ export default class GameScene extends Phaser.Scene {
     this.ai.resetTimers();
 
     this.time.delayedCall(500, () => {
-      this.gsm.setState(GAME_STATES.KICKOFF_PULL);
+      this._setupNextState = GAME_STATES.KICKOFF_PULL;
+      this.gsm.setState(GAME_STATES.SETUP);
     });
   }
 
@@ -454,10 +547,14 @@ export default class GameScene extends Phaser.Scene {
 
   giveDiscToPlayer(player) {
     this.getAllPlayers().forEach(p => {
-      if (p.hasDisc) p.releaseDisc();
+      if (p.hasDisc) {
+        p.releaseDisc();
+        if (p.teamId === player.teamId) p.fsmState = 'cutting';
+      }
     });
 
     player.catchDisc();
+    player.fsmState = 'handler';
     this.disc.attachToPlayer(player);
     this.possession.setHandler(player.id);
   }
@@ -608,6 +705,12 @@ export default class GameScene extends Phaser.Scene {
 
     this.updateUI();
     this.updateParticles(delta);
+    this.updateCameraFollow();
+
+    if (state === GAME_STATES.SETUP) {
+      this.updateSetup(delta);
+      return;
+    }
 
     if (state === GAME_STATES.KICKOFF_PULL) {
       this.updatePull(delta);
@@ -874,6 +977,7 @@ export default class GameScene extends Phaser.Scene {
 
     const state = this.gsm.getState();
     const stateLabels = {
+      [GAME_STATES.SETUP]: 'SETUP -- Players taking positions',
       [GAME_STATES.KICKOFF_PULL]: 'PULL -- Aim and click to throw',
       [GAME_STATES.LIVE_PLAY]: 'LIVE PLAY -- Drag to throw',
       [GAME_STATES.TURNOVER]: 'TURNOVER',
@@ -923,6 +1027,7 @@ export default class GameScene extends Phaser.Scene {
     if (this._domState) {
       const state = this.gsm.getState();
       const labels = {
+        [GAME_STATES.SETUP]: 'Setup \u2014 Players taking positions',
         [GAME_STATES.KICKOFF_PULL]: 'Pull \u2014 Aim & click to throw',
         [GAME_STATES.LIVE_PLAY]: 'Live Play \u2014 Drag to throw',
         [GAME_STATES.TURNOVER]: 'Turnover',

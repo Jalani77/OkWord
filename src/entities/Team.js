@@ -81,4 +81,37 @@ export default class Team {
   getTargetEndZone() {
     return this.attackingRight ? 'right' : 'left';
   }
+
+  assignSetupTargets(forPull) {
+    const spacing = FIELD.HEIGHT / (this.players.length + 1);
+
+    let baseX;
+    if (forPull) {
+      if (this.isOffense) {
+        baseX = this.attackingRight
+          ? FIELD_BOUNDS.ENDZONE_LEFT_END + 40
+          : FIELD_BOUNDS.ENDZONE_RIGHT_START - 40;
+      } else {
+        baseX = this.attackingRight
+          ? FIELD_BOUNDS.ENDZONE_RIGHT_START - 40
+          : FIELD_BOUNDS.ENDZONE_LEFT_END + 40;
+      }
+    } else {
+      if (this.isOffense) {
+        baseX = this.attackingRight
+          ? FIELD.OFFSET_X + FIELD.WIDTH * 0.35
+          : FIELD.OFFSET_X + FIELD.WIDTH * 0.65;
+      } else {
+        baseX = this.attackingRight
+          ? FIELD.OFFSET_X + FIELD.WIDTH * 0.65
+          : FIELD.OFFSET_X + FIELD.WIDTH * 0.35;
+      }
+    }
+
+    this.players.forEach((player, i) => {
+      player.setupTargetX = baseX + ((i % 2 === 0 ? -1 : 1) * 20);
+      player.setupTargetY = FIELD.OFFSET_Y + spacing * (i + 1);
+      player.fsmState = 'idle';
+    });
+  }
 }
