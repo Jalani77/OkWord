@@ -12,7 +12,7 @@ import CollisionSystem from '../systems/CollisionSystem.js';
 import AIController from '../systems/AIController.js';
 import {
   GAME_WIDTH, GAME_HEIGHT, GAME_STATES, DISC_STATES,
-  TEAMS, FIELD_BOUNDS, FIELD, PLAYER, PULL, DISC
+  TEAMS, FIELD_BOUNDS, FIELD, PLAYER, PULL, DISC, AI
 } from '../utils/Constants.js';
 import { distanceBetween, angleBetween, clamp } from '../utils/MathHelpers.js';
 
@@ -305,11 +305,40 @@ export default class GameScene extends Phaser.Scene {
     this.ai.resetTimers();
 
     this.time.delayedCall(1200, () => {
-      if (this.gsm.is(GAME_STATES.TURNOVER)) {
-        this._setupNextState = GAME_STATES.LIVE_PLAY;
-        this.gsm.setState(GAME_STATES.SETUP);
-      }
+      if (!this.gsm.is(GAME_STATES.TURNOVER)) return;
+      this.tweenPlayersToReset(() => {
+        this.time.delayedCall(AI.TURNOVER_DELAY_MS, () => {
+          if (this.gsm.is(GAME_STATES.TURNOVER)) {
+            this.gsm.setState(GAME_STATES.LIVE_PLAY);
+          }
+        });
+      });
     });
+  }
+
+  tweenPlayersToReset(onComplete) {
+    const offTeam = this.getOffenseTeam();
+    const defTeam = this.getDefenseTeam();
+
+    offTeam.assignSetupTargets(false);
+    defTeam.assignSetupTargets(false);
+
+    const allPlayers = this.getAllPlayers();
+    let completed = 0;
+    const total = allPlayers.length;
+
+    for (const player of allPlayers) {
+      player.fsmState = 'idle';
+      player.tweenToPosition(
+        player.setupTargetX,
+        player.setupTargetY,
+        AI.TURNOVER_TWEEN_MS,
+        () => {
+          completed++;
+          if (completed >= total && onComplete) onComplete();
+        }
+      );
+    }
   }
 
   enterScore() {
@@ -698,6 +727,18 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  processAI(delta) {
+    const state = this.gsm.getState();
+    if (state !== GAME_STATES.LIVE_PLAY && state !== GAME_STATES.KICKOFF_PULL) return;
+
+    const allPlayers = this.getAllPlayers();
+    for (const p of allPlayers) {
+      if (p.isPivoting) continue;
+      const limit = p.fsmState === 'idle' ? PLAYER.WALK_SPEED : PLAYER.MAX_SPEED;
+      p.clampVelocity(limit);
+    }
+  }
+
   // --- Update Loop ---
 
   update(time, delta) {
@@ -726,6 +767,8 @@ export default class GameScene extends Phaser.Scene {
     if (state === GAME_STATES.LIVE_PLAY || state === GAME_STATES.TURNOVER) {
       this.updateLivePlay(delta);
     }
+
+    this.processAI(delta);
   }
 
   updatePull(delta) {

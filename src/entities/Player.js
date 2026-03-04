@@ -20,11 +20,17 @@ export default class Player {
     this.setupTargetY = 0;
     this.reticlePhase = 0;
 
-    const color = teamId === 'A' ? PLAYER.TEAM_A_COLOR : PLAYER.TEAM_B_COLOR;
+    this.teamColor = teamId === 'A' ? PLAYER.TEAM_A_COLOR : PLAYER.TEAM_B_COLOR;
 
-    this.sprite = scene.add.circle(x, y, PLAYER.RADIUS, color);
+    if (scene.textures.exists('player_sprite')) {
+      this.sprite = scene.add.sprite(x, y, 'player_sprite');
+      this.sprite.setDisplaySize(PLAYER.RADIUS * 2, PLAYER.RADIUS * 2);
+      this.sprite.setTint(this.teamColor);
+    } else {
+      this.sprite = scene.add.circle(x, y, PLAYER.RADIUS, this.teamColor);
+    }
+
     scene.physics.add.existing(this.sprite);
-
     this.sprite.body.setCircle(PLAYER.RADIUS);
     this.sprite.body.setCollideWorldBounds(false);
     this.sprite.body.setMaxVelocity(PLAYER.MAX_SPEED, PLAYER.MAX_SPEED);
@@ -180,6 +186,39 @@ export default class Player {
       this.directionGraphics.lineTo(endX, endY);
       this.directionGraphics.strokePath();
     }
+  }
+
+  clampVelocity(maxSpeed = PLAYER.MAX_SPEED) {
+    const vx = this.sprite.body.velocity.x;
+    const vy = this.sprite.body.velocity.y;
+    const speed = Math.sqrt(vx * vx + vy * vy);
+    if (speed > maxSpeed) {
+      const scale = maxSpeed / speed;
+      this.sprite.body.setVelocity(vx * scale, vy * scale);
+    }
+  }
+
+  tweenToPosition(x, y, duration = 800, onComplete) {
+    this.sprite.body.setVelocity(0, 0);
+    this.sprite.body.setAcceleration(0, 0);
+
+    this.scene.tweens.add({
+      targets: this.sprite,
+      x, y,
+      duration,
+      ease: 'Sine.easeInOut',
+      onUpdate: () => {
+        if (this.sprite.body) {
+          this.sprite.body.reset(this.sprite.x, this.sprite.y);
+        }
+      },
+      onComplete: () => {
+        if (this.sprite.body) {
+          this.sprite.body.reset(x, y);
+        }
+        if (onComplete) onComplete();
+      },
+    });
   }
 
   destroy() {

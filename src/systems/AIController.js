@@ -192,11 +192,21 @@ export default class AIController {
   decideDefenseTarget(defender, offensePlayers, handler, disc, index) {
     if (defender.fsmState === 'marking' && defender.assignedMatchup) {
       const matchup = defender.assignedMatchup;
-      const offset = 10;
-      this.targetPositions[defender.id] = {
-        x: matchup.x + randomInRange(-offset, offset),
-        y: matchup.y + randomInRange(-offset, offset),
-      };
+
+      if (handler && handler.hasDisc) {
+        const laneAngle = angleBetween(matchup, handler);
+        const blockDist = randomInRange(AI.MARK_RANGE_MIN, AI.MARK_RANGE_MAX) * 0.35;
+        this.targetPositions[defender.id] = {
+          x: matchup.x + Math.cos(laneAngle) * blockDist + randomInRange(-4, 4),
+          y: matchup.y + Math.sin(laneAngle) * blockDist + randomInRange(-4, 4),
+        };
+      } else {
+        const drift = randomInRange(AI.MARK_RANGE_MIN * 0.3, AI.MARK_RANGE_MIN * 0.6);
+        this.targetPositions[defender.id] = {
+          x: matchup.x + randomInRange(-drift, drift),
+          y: matchup.y + randomInRange(-drift, drift),
+        };
+      }
       return;
     }
 
@@ -211,9 +221,10 @@ export default class AIController {
 
     const matchup = offensePlayers[index % offensePlayers.length];
     if (matchup) {
+      const drift = randomInRange(AI.MARK_RANGE_MIN * 0.3, AI.MARK_RANGE_MIN * 0.6);
       this.targetPositions[defender.id] = {
-        x: matchup.x + randomInRange(-20, 20),
-        y: matchup.y + randomInRange(-20, 20),
+        x: matchup.x + randomInRange(-drift, drift),
+        y: matchup.y + randomInRange(-drift, drift),
       };
     }
   }

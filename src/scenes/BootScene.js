@@ -31,6 +31,34 @@ export default class BootScene extends Phaser.Scene {
   }
 
   create() {
+    this.loadAssets();
     this.scene.start('MenuScene');
+  }
+
+  loadAssets() {
+    const s = 48;
+    const cx = s / 2;
+    const cy = s / 2;
+    const g = this.make.graphics({ x: 0, y: 0, add: false });
+
+    g.fillStyle(0x000000, 0.12);
+    g.fillEllipse(cx, cy + 6, 30, 10);
+
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(cx, cy + 2, 16);
+
+    g.fillCircle(cx, cy - 10, 7);
+
+    g.fillStyle(0xffffff, 1);
+    g.fillRect(cx - 6, cy - 7, 12, 5);
+
+    g.fillStyle(0xffffff, 0.35);
+    g.fillCircle(cx - 4, cy - 2, 7);
+
+    g.lineStyle(1, 0xdddddd, 0.25);
+    g.strokeCircle(cx, cy + 2, 16);
+
+    g.generateTexture('player_sprite', s, s);
+    g.destroy();
   }
 }
